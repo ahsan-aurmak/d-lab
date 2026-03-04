@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <radialGradient id="g" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#6b7280"/>
+      <stop offset="60%" stop-color="#374151"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="600" fill="#000000"/>
+  <ellipse cx="400" cy="300" rx="196" ry="142" fill="url(#g)"/>
+  <ellipse cx="400" cy="300" rx="142" ry="103" fill="#9ca3af" fill-opacity="0.22"/>
+  <ellipse cx="400" cy="300" rx="93" ry="68" fill="#d1d5db" fill-opacity="0.12"/>
+  <circle cx="378" cy="274" r="24" fill="#f3f4f6" fill-opacity="0.2"/>
+  <text x="20" y="32" fill="#e5e7eb" font-size="22" font-family="Arial, sans-serif">MRI Slice 4</text>
+</svg>
