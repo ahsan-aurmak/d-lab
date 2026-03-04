@@ -47,6 +47,7 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+import { applyDraftEdits, isDraftQueueItem } from '@/lib/queueWorkflow'
 import {
   BillingLedgerItem,
   BiomarkerResult,
@@ -402,7 +403,13 @@ export default function App() {
     [patients, selectedPatientId]
   )
 
-  const scanStack = selectedPatient?.scanStudy.images ?? []
+  const queuePatient = useMemo(
+    () => (selectedQueueItem ? patients.find((patient) => patient.id === selectedQueueItem.patientUid) ?? null : null),
+    [patients, selectedQueueItem]
+  )
+
+  const pathologistPatient = queuePatient ?? selectedPatient
+  const scanStack = pathologistPatient?.scanStudy.images ?? []
 
   useEffect(() => {
     if (!selectedPatient) return
@@ -668,15 +675,41 @@ export default function App() {
   }
 
   function openQueueItem(item: LabQueueItem) {
-    if (item.status !== 'Draft') return
+    if (!isDraftQueueItem(item)) return
+    if (patients.some((patient) => patient.id === item.patientUid)) {
+      setSelectedPatientId(item.patientUid)
+    } else {
+      setToast({ message: 'Patient profile not found for this request.', tone: 'warning' })
+    }
     setSelectedQueueItem(item)
     setEditedValues(item.values)
     setAiSummary(makeAiSummary(item.values))
     setDrawerOpen(true)
   }
 
+  function handleQueueDrawerOpenChange(open: boolean) {
+    setDrawerOpen(open)
+    if (!open) {
+      setSelectedQueueItem(null)
+      setEditedValues({})
+      setAiSummary('')
+    }
+  }
+
+  function saveDraftEdits() {
+    if (!selectedQueueItem) return
+    setLabQueue((current) => applyDraftEdits(current, selectedQueueItem.id, editedValues))
+    handleQueueDrawerOpenChange(false)
+    setToast({ message: 'Draft values saved.', tone: 'success' })
+  }
+
   function publishQueueItem() {
     if (!selectedQueueItem) return
+    const targetPatient = patients.find((patient) => patient.id === selectedQueueItem.patientUid)
+    if (!targetPatient) {
+      setToast({ message: 'Cannot publish: patient record is missing.', tone: 'warning' })
+      return
+    }
 
     const today = new Date().toISOString().slice(0, 10)
 
@@ -731,7 +764,7 @@ export default function App() {
     )
 
     setSelectedPatientId(selectedQueueItem.patientUid)
-    setDrawerOpen(false)
+    handleQueueDrawerOpenChange(false)
     setToast({ message: 'Report signed and published to patient vault.', tone: 'success' })
   }
 
@@ -2019,142 +2052,146 @@ export default function App() {
       )
     }
 
-    return (
-      <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Operational Connections</CardTitle>
-            <CardDescription>Integration points that power inventory, billing, dispatch, and claims journeys.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {systemConnections.map((connection) => (
-              <div className="rounded-xl border border-slate-200 p-3" key={connection.id}>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">{connection.name}</p>
-                    <p className="text-xs text-slate-500">{connection.purpose}</p>
+    if (adminPage === 'Connectors') {
+      return (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Operational Connections</CardTitle>
+              <CardDescription>Integration points that power inventory, billing, dispatch, and claims journeys.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {systemConnections.map((connection) => (
+                <div className="rounded-xl border border-slate-200 p-3" key={connection.id}>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">{connection.name}</p>
+                      <p className="text-xs text-slate-500">{connection.purpose}</p>
+                    </div>
+                    <Badge variant={connection.status === 'Connected' ? 'success' : connection.status === 'Error' ? 'danger' : 'secondary'}>
+                      {connection.status}
+                    </Badge>
                   </div>
-                  <Badge variant={connection.status === 'Connected' ? 'success' : connection.status === 'Error' ? 'danger' : 'secondary'}>
-                    {connection.status}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-500">Last sync: {connection.lastSync}</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Allow Sync</span>
-                    <Switch checked={connection.syncEnabled} onCheckedChange={() => toggleSystemConnection(connection.id)} />
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">Last sync: {connection.lastSync}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Allow Sync</span>
+                      <Switch checked={connection.syncEnabled} onCheckedChange={() => toggleSystemConnection(connection.id)} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Medical Equipment Connectors</CardTitle>
-            <CardDescription>
-              Connection model mirrors production patterns: HL7/DICOM/API over network, or ASTM via serial-to-gateway.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:grid-cols-4">
-              <p><span className="font-semibold text-slate-800">Analyzer LIS:</span> HL7 v2.5.1 LAW over TCP/IP</p>
-              <p><span className="font-semibold text-slate-800">Legacy Serial:</span> ASTM E1381/E1394 via RS-232 gateway</p>
-              <p><span className="font-semibold text-slate-800">Imaging:</span> DICOM to PACS bridge over TCP/IP</p>
-              <p><span className="font-semibold text-slate-800">Cloud APIs:</span> FHIR REST over HTTPS + token/mTLS</p>
-            </div>
-            <form className="grid gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-7" onSubmit={addConnector}>
-              <Input
-                onChange={(event) => setNewConnector((current) => ({ ...current, name: event.target.value }))}
-                placeholder="Equipment name"
-                value={newConnector.name}
-              />
-              <Input
-                onChange={(event) => setNewConnector((current) => ({ ...current, vendor: event.target.value }))}
-                placeholder="Vendor"
-                value={newConnector.vendor}
-              />
-              <Select
-                onChange={(event) =>
-                  setNewConnector((current) => ({
-                    ...current,
-                    dataType: event.target.value as EquipmentConnector['dataType']
-                  }))
-                }
-                value={newConnector.dataType}
-              >
-                <option value="Hematology">Hematology</option>
-                <option value="Chemistry">Chemistry</option>
-                <option value="Imaging">Imaging</option>
-                <option value="Immunoassay">Immunoassay</option>
-              </Select>
-              <Select
-                onChange={(event) =>
-                  setNewConnector((current) => ({
-                    ...current,
-                    interfaceStandard: event.target.value as EquipmentConnector['interfaceStandard'],
-                    authMode: defaultAuthForInterface(event.target.value as EquipmentConnector['interfaceStandard']),
-                    endpoint: defaultEndpointForInterface(event.target.value as EquipmentConnector['interfaceStandard'])
-                  }))
-                }
-                value={newConnector.interfaceStandard}
-              >
-                <option value="HL7 v2.5.1 (LAW)">HL7 v2.5.1 (LAW)</option>
-                <option value="ASTM LIS2 Serial">ASTM LIS2 Serial</option>
-                <option value="DICOM">DICOM</option>
-                <option value="REST/FHIR API">REST/FHIR API</option>
-              </Select>
-              <Input
-                onChange={(event) => setNewConnector((current) => ({ ...current, endpoint: event.target.value }))}
-                placeholder="Endpoint (host:port / URL / serial)"
-                value={newConnector.endpoint}
-              />
-              <Select
-                onChange={(event) =>
-                  setNewConnector((current) => ({
-                    ...current,
-                    authMode: event.target.value as EquipmentConnector['authMode']
-                  }))
-                }
-                value={newConnector.authMode}
-              >
-                <option value="None">Auth: None</option>
-                <option value="Token">Auth: Token</option>
-                <option value="Basic">Auth: Basic</option>
-                <option value="mTLS">Auth: mTLS</option>
-              </Select>
-              <Button type="submit">Add Equipment</Button>
-            </form>
-            {connectors.map((connector) => (
-              <div className="rounded-xl border border-slate-200 p-3" key={connector.id}>
-                <div className="mb-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">{connector.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {connector.vendor} · {connector.dataType} · {connector.interfaceStandard}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {connector.transport} · {connector.endpoint} · {connector.authMode}
-                    </p>
-                  </div>
-                  <Badge variant={connector.status === 'Connected' ? 'success' : connector.status === 'Error' ? 'danger' : 'secondary'}>
-                    {connector.status}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-500">Last sync: {connector.lastSync}</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Allow Sync</span>
-                    <Switch checked={connector.syncEnabled} onCheckedChange={() => toggleConnectorSync(connector.id)} />
-                  </div>
-                </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Medical Equipment Connectors</CardTitle>
+              <CardDescription>
+                Connection model mirrors production patterns: HL7/DICOM/API over network, or ASTM via serial-to-gateway.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:grid-cols-4">
+                <p><span className="font-semibold text-slate-800">Analyzer LIS:</span> HL7 v2.5.1 LAW over TCP/IP</p>
+                <p><span className="font-semibold text-slate-800">Legacy Serial:</span> ASTM E1381/E1394 via RS-232 gateway</p>
+                <p><span className="font-semibold text-slate-800">Imaging:</span> DICOM to PACS bridge over TCP/IP</p>
+                <p><span className="font-semibold text-slate-800">Cloud APIs:</span> FHIR REST over HTTPS + token/mTLS</p>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-    )
+              <form className="grid gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-7" onSubmit={addConnector}>
+                <Input
+                  onChange={(event) => setNewConnector((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Equipment name"
+                  value={newConnector.name}
+                />
+                <Input
+                  onChange={(event) => setNewConnector((current) => ({ ...current, vendor: event.target.value }))}
+                  placeholder="Vendor"
+                  value={newConnector.vendor}
+                />
+                <Select
+                  onChange={(event) =>
+                    setNewConnector((current) => ({
+                      ...current,
+                      dataType: event.target.value as EquipmentConnector['dataType']
+                    }))
+                  }
+                  value={newConnector.dataType}
+                >
+                  <option value="Hematology">Hematology</option>
+                  <option value="Chemistry">Chemistry</option>
+                  <option value="Imaging">Imaging</option>
+                  <option value="Immunoassay">Immunoassay</option>
+                </Select>
+                <Select
+                  onChange={(event) =>
+                    setNewConnector((current) => ({
+                      ...current,
+                      interfaceStandard: event.target.value as EquipmentConnector['interfaceStandard'],
+                      authMode: defaultAuthForInterface(event.target.value as EquipmentConnector['interfaceStandard']),
+                      endpoint: defaultEndpointForInterface(event.target.value as EquipmentConnector['interfaceStandard'])
+                    }))
+                  }
+                  value={newConnector.interfaceStandard}
+                >
+                  <option value="HL7 v2.5.1 (LAW)">HL7 v2.5.1 (LAW)</option>
+                  <option value="ASTM LIS2 Serial">ASTM LIS2 Serial</option>
+                  <option value="DICOM">DICOM</option>
+                  <option value="REST/FHIR API">REST/FHIR API</option>
+                </Select>
+                <Input
+                  onChange={(event) => setNewConnector((current) => ({ ...current, endpoint: event.target.value }))}
+                  placeholder="Endpoint (host:port / URL / serial)"
+                  value={newConnector.endpoint}
+                />
+                <Select
+                  onChange={(event) =>
+                    setNewConnector((current) => ({
+                      ...current,
+                      authMode: event.target.value as EquipmentConnector['authMode']
+                    }))
+                  }
+                  value={newConnector.authMode}
+                >
+                  <option value="None">Auth: None</option>
+                  <option value="Token">Auth: Token</option>
+                  <option value="Basic">Auth: Basic</option>
+                  <option value="mTLS">Auth: mTLS</option>
+                </Select>
+                <Button type="submit">Add Equipment</Button>
+              </form>
+              {connectors.map((connector) => (
+                <div className="rounded-xl border border-slate-200 p-3" key={connector.id}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{connector.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {connector.vendor} · {connector.dataType} · {connector.interfaceStandard}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {connector.transport} · {connector.endpoint} · {connector.authMode}
+                      </p>
+                    </div>
+                    <Badge variant={connector.status === 'Connected' ? 'success' : connector.status === 'Error' ? 'danger' : 'secondary'}>
+                      {connector.status}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">Last sync: {connector.lastSync}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Allow Sync</span>
+                      <Switch checked={connector.syncEnabled} onCheckedChange={() => toggleConnectorSync(connector.id)} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )
+    }
+
+    return null
   }
 
   const renderLabAdmin = () => (
@@ -2198,27 +2235,30 @@ export default function App() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredQueue.map((item) => (
-                      <TableRow
-                        className={cn(item.status === 'Draft' ? 'cursor-pointer' : 'cursor-default')}
-                        key={item.id}
-                        onClick={() => openQueueItem(item)}
-                      >
-                        <TableCell className="font-medium">{item.id}</TableCell>
-                        <TableCell>{item.patientName}</TableCell>
-                        <TableCell>{item.test}</TableCell>
-                        <TableCell>
-                          <Badge variant={isQueueCritical(item) ? 'warning' : 'secondary'}>
-                            {isQueueCritical(item) ? 'Critical' : 'Routine'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={item.status === 'Published' ? 'success' : item.status === 'Flagged' ? 'warning' : 'secondary'}>
-                            {item.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {filteredQueue.map((item) => {
+                      const isDraft = isDraftQueueItem(item)
+                      return (
+                        <TableRow
+                          className={cn(isDraft ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default')}
+                          key={item.id}
+                          onClick={isDraft ? () => openQueueItem(item) : undefined}
+                        >
+                          <TableCell className="font-medium">{item.id}</TableCell>
+                          <TableCell>{item.patientName}</TableCell>
+                          <TableCell>{item.test}</TableCell>
+                          <TableCell>
+                            <Badge variant={isQueueCritical(item) ? 'warning' : 'secondary'}>
+                              {isQueueCritical(item) ? 'Critical' : 'Routine'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={item.status === 'Published' ? 'success' : item.status === 'Flagged' ? 'warning' : 'secondary'}>
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -2233,6 +2273,19 @@ export default function App() {
           <CardDescription>Web diagnostic preview + annotation mode simulation.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+            <p className="font-semibold text-slate-800">
+              Reviewing: {selectedQueueItem ? selectedQueueItem.patientName : pathologistPatient?.name}
+            </p>
+            <p>
+              {selectedQueueItem
+                ? `${selectedQueueItem.id} · ${selectedQueueItem.test}`
+                : 'Select a draft row to lock patient context for review.'}
+            </p>
+            {selectedQueueItem && !queuePatient ? (
+              <p className="mt-1 font-medium text-amber-700">Patient profile missing. Publishing is disabled.</p>
+            ) : null}
+          </div>
           <div className="relative h-48 overflow-hidden rounded-2xl border border-slate-900 bg-black">
             <img
               alt="DICOM preview"
@@ -2243,7 +2296,7 @@ export default function App() {
                 transform: `scale(${zoomEnabled ? zoomLevel : 1})`
               }}
             />
-            <div className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white">{selectedPatient?.scanStudy.study}</div>
+            <div className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white">{pathologistPatient?.scanStudy.study}</div>
           </div>
           <div className="rounded-xl border border-slate-200 p-3">
             <p className="text-xs font-semibold uppercase text-slate-500">AI Reporting Assistant</p>
@@ -2614,7 +2667,7 @@ export default function App() {
         {persona === 'doctor' ? renderDoctor() : null}
       </main>
 
-      <Drawer onOpenChange={setDrawerOpen} open={drawerOpen}>
+      <Drawer onOpenChange={handleQueueDrawerOpenChange} open={drawerOpen}>
         {selectedQueueItem ? (
           <div className="space-y-4">
             <div>
@@ -2650,12 +2703,12 @@ export default function App() {
               <CardContent className="text-sm text-slate-600">{aiSummary}</CardContent>
             </Card>
 
-            <Button className="w-full" onClick={publishQueueItem}>
+            <Button className="w-full" disabled={!queuePatient} onClick={publishQueueItem}>
               <CheckCircle2 className="h-4 w-4" />
-              E-Sign & Publish
+              {queuePatient ? 'E-Sign & Publish' : 'Patient Missing - Cannot Publish'}
             </Button>
-            <Button className="w-full" onClick={() => setDrawerOpen(false)} variant="outline">
-              Save as Draft
+            <Button className="w-full" onClick={saveDraftEdits} variant="outline">
+              Save Changes to Draft
             </Button>
           </div>
         ) : null}
