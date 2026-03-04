@@ -95,7 +95,7 @@ const PERSONA_LABEL: Record<Persona, string> = {
   admin: 'Lab Admin',
   pathologist: 'Pathologist',
   patient: 'Patient App',
-  doctor: 'Doctor Portal'
+  doctor: 'Lab Doctor'
 }
 
 const PHQ_QUESTIONS = [
@@ -670,6 +670,102 @@ export default function App() {
       .map((row) => ({ marker: row.marker, current: row.current, previous: row.previous, unit: row.unit }))
   }, [selectedPatient])
 
+  const pathologistBacklogTrend = useMemo(() => {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    const baseDraft = Math.max(1, pendingDrafts)
+    const baseCritical = Math.max(1, criticalQueueCount)
+    const factors = [0.92, 1.05, 0.96, 1.12, 1.08, 0.9, 1]
+
+    return days.map((day, index) => ({
+      day,
+      draft: Math.max(0, Math.round(baseDraft * factors[index])),
+      critical: Math.max(0, Math.round(baseCritical * (0.74 + index * 0.04)))
+    }))
+  }, [pendingDrafts, criticalQueueCount])
+
+  const pathologistAbnormalMarkers = useMemo(() => {
+    const counts = new Map<string, number>()
+
+    labQueue.forEach((item) => {
+      Object.entries(item.values).forEach(([marker, value]) => {
+        if (!isCriticalValue(marker, value)) return
+        counts.set(marker, (counts.get(marker) ?? 0) + 1)
+      })
+    })
+
+    return Array.from(counts.entries())
+      .map(([marker, count]) => ({ marker, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+  }, [labQueue])
+
+  const labDoctorWorklist = useMemo(() => {
+    return patients
+      .map((patient) => {
+        const latestPublished = [...patient.reports]
+          .filter((report) => report.status === 'Published')
+          .sort((a, b) => b.date.localeCompare(a.date))[0]
+
+        if (!latestPublished) return null
+
+        const abnormal = latestPublished.biomarkers.filter(
+          (marker) => marker.value < marker.normalMin || marker.value > marker.normalMax
+        )
+
+        if (!abnormal.length) return null
+
+        return {
+          patientId: patient.id,
+          patientName: patient.name,
+          abnormalCount: abnormal.length,
+          lastDate: latestPublished.date,
+          provider: latestPublished.tenant,
+          markers: abnormal.map((marker) => marker.name).join(', ')
+        }
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .sort((a, b) => b.abnormalCount - a.abnormalCount)
+      .slice(0, 8)
+  }, [patients])
+
+  const labDoctorMarkerExceptionData = useMemo(() => {
+    const counts = new Map<string, number>()
+
+    patients.forEach((patient) => {
+      patient.reports
+        .filter((report) => report.status === 'Published')
+        .forEach((report) => {
+          report.biomarkers.forEach((marker) => {
+            const isAbnormal = marker.value < marker.normalMin || marker.value > marker.normalMax
+            if (!isAbnormal) return
+            counts.set(marker.name, (counts.get(marker.name) ?? 0) + 1)
+          })
+        })
+    })
+
+    return Array.from(counts.entries())
+      .map(([marker, cases]) => ({ marker, cases }))
+      .sort((a, b) => b.cases - a.cases)
+      .slice(0, 8)
+  }, [patients])
+
+  const labDoctorTenantLoad = useMemo(() => {
+    const counts = new Map<string, number>()
+
+    patients.forEach((patient) => {
+      patient.reports
+        .filter((report) => report.status === 'Published')
+        .forEach((report) => {
+          counts.set(report.tenant, (counts.get(report.tenant) ?? 0) + 1)
+        })
+    })
+
+    return Array.from(counts.entries())
+      .map(([tenant, reports]) => ({ tenant, reports }))
+      .sort((a, b) => b.reports - a.reports)
+      .slice(0, 6)
+  }, [patients])
+
   function switchPersona() {
     setPersona((current) => PERSONA_ORDER[(PERSONA_ORDER.indexOf(current) + 1) % PERSONA_ORDER.length])
   }
@@ -1209,6 +1305,9 @@ export default function App() {
                 <CardDescription>Revenue collection trend versus insurance claim backlog.</CardDescription>
               </CardHeader>
               <CardContent className="h-72">
+                <p className="sr-only">
+                  Weekly trend comparing revenue and insurance claim backlog from Monday to Sunday.
+                </p>
                 <ResponsiveContainer height="100%" width="100%">
                   <AreaChart data={weeklyOpsData}>
                     <defs>
@@ -1239,6 +1338,7 @@ export default function App() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="h-44">
+                  <p className="sr-only">Payer mix chart showing self-pay and insurance invoice counts.</p>
                   <ResponsiveContainer height="100%" width="100%">
                     <PieChart>
                       <Pie
@@ -1287,6 +1387,7 @@ export default function App() {
                 <CardDescription>Draft, flagged, and published report counts.</CardDescription>
               </CardHeader>
               <CardContent className="h-64">
+                <p className="sr-only">Bar chart comparing draft, flagged, and published queue items.</p>
                 <ResponsiveContainer height="100%" width="100%">
                   <BarChart data={queueStatusData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -1305,6 +1406,7 @@ export default function App() {
                 <CardDescription>Current stage distribution for insurance invoices.</CardDescription>
               </CardHeader>
               <CardContent className="h-64">
+                <p className="sr-only">Bar chart showing claim status counts for submitted, in review, and paid.</p>
                 <ResponsiveContainer height="100%" width="100%">
                   <BarChart data={claimsStageData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -1323,6 +1425,7 @@ export default function App() {
                 <CardDescription>Low-stock pressure versus healthy stock count.</CardDescription>
               </CardHeader>
               <CardContent className="h-64">
+                <p className="sr-only">Bar chart comparing healthy stock and low-stock items by inventory category.</p>
                 <ResponsiveContainer height="100%" width="100%">
                   <BarChart data={inventoryRiskData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -2076,7 +2179,11 @@ export default function App() {
                     <p className="text-xs text-slate-500">Last sync: {connection.lastSync}</p>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-500">Allow Sync</span>
-                      <Switch checked={connection.syncEnabled} onCheckedChange={() => toggleSystemConnection(connection.id)} />
+                      <Switch
+                        aria-label={`Allow sync for ${connection.name}`}
+                        checked={connection.syncEnabled}
+                        onCheckedChange={() => toggleSystemConnection(connection.id)}
+                      />
                     </div>
                   </div>
                 </div>
@@ -2180,7 +2287,11 @@ export default function App() {
                     <p className="text-xs text-slate-500">Last sync: {connector.lastSync}</p>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-500">Allow Sync</span>
-                      <Switch checked={connector.syncEnabled} onCheckedChange={() => toggleConnectorSync(connector.id)} />
+                      <Switch
+                        aria-label={`Allow sync for ${connector.name}`}
+                        checked={connector.syncEnabled}
+                        onCheckedChange={() => toggleConnectorSync(connector.id)}
+                      />
                     </div>
                   </div>
                 </div>
@@ -2209,105 +2320,239 @@ export default function App() {
   )
 
   const renderPathologist = () => (
-    <section className="mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle>Validation Queue</CardTitle>
-          <CardDescription>Triage queue with priority flags and one-click e-sign publishing.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Tabs onValueChange={(value) => setQueueFilter(value as QueueFilter)} value={queueFilter}>
-            <TabsList>
-              <TabsTrigger value="All">All</TabsTrigger>
-              <TabsTrigger value="Critical">Critical</TabsTrigger>
-              <TabsTrigger value="Draft">Draft</TabsTrigger>
-            </TabsList>
-            <TabsContent className="mt-3" value={queueFilter}>
-              <div className="overflow-hidden rounded-2xl border border-slate-200">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Req ID</TableHead>
-                      <TableHead>Patient</TableHead>
-                      <TableHead>Test</TableHead>
-                      <TableHead>Priority</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredQueue.map((item) => {
-                      const isDraft = isDraftQueueItem(item)
-                      return (
-                        <TableRow
-                          className={cn(isDraft ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default')}
-                          key={item.id}
-                          onClick={isDraft ? () => openQueueItem(item) : undefined}
-                        >
-                          <TableCell className="font-medium">{item.id}</TableCell>
-                          <TableCell>{item.patientName}</TableCell>
-                          <TableCell>{item.test}</TableCell>
-                          <TableCell>
-                            <Badge variant={isQueueCritical(item) ? 'warning' : 'secondary'}>
-                              {isQueueCritical(item) ? 'Critical' : 'Routine'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={item.status === 'Published' ? 'success' : item.status === 'Flagged' ? 'warning' : 'secondary'}>
-                              {item.status}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+    <section className="mx-auto w-full max-w-[1440px] space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card>
+          <CardHeader>
+            <CardDescription>Draft Queue</CardDescription>
+            <CardTitle>{pendingDrafts}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Critical Cases</CardDescription>
+            <CardTitle>{criticalQueueCount}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Published Reports</CardDescription>
+            <CardTitle>{publishedQueueCount}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Current Review</CardDescription>
+            <CardTitle>{selectedQueueItem?.id ?? 'No draft selected'}</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <CardTitle>Validation Queue</CardTitle>
+            <CardDescription>Triage queue with priority flags and one-click e-sign publishing.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Tabs onValueChange={(value) => setQueueFilter(value as QueueFilter)} value={queueFilter}>
+              <TabsList>
+                <TabsTrigger value="All">All</TabsTrigger>
+                <TabsTrigger value="Critical">Critical</TabsTrigger>
+                <TabsTrigger value="Draft">Draft</TabsTrigger>
+              </TabsList>
+              <TabsContent className="mt-3" value={queueFilter}>
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Req ID</TableHead>
+                        <TableHead>Patient</TableHead>
+                        <TableHead>Test</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredQueue.map((item) => {
+                        const isDraft = isDraftQueueItem(item)
+                        return (
+                          <TableRow
+                            className={cn(isDraft ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default')}
+                            key={item.id}
+                            onKeyDown={(event) => {
+                              if (!isDraft) return
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                openQueueItem(item)
+                              }
+                            }}
+                            onClick={isDraft ? () => openQueueItem(item) : undefined}
+                            role={isDraft ? 'button' : undefined}
+                            tabIndex={isDraft ? 0 : -1}
+                          >
+                            <TableCell className="font-medium">{item.id}</TableCell>
+                            <TableCell>{item.patientName}</TableCell>
+                            <TableCell>{item.test}</TableCell>
+                            <TableCell>
+                              <Badge variant={isQueueCritical(item) ? 'warning' : 'secondary'}>
+                                {isQueueCritical(item) ? 'Critical' : 'Routine'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={item.status === 'Published' ? 'success' : item.status === 'Flagged' ? 'warning' : 'secondary'}>
+                                {item.status}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="h-52 overflow-hidden rounded-2xl border border-slate-200 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Backlog Trend (Simulation)</p>
+              <p className="sr-only">Line chart showing simulated draft and critical queue trends over a week.</p>
+              <ResponsiveContainer height="100%" width="100%">
+                <LineChart data={pathologistBacklogTrend}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="day" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Line dataKey="draft" name="Draft" stroke={primaryColor} strokeWidth={2} type="monotone" />
+                  <Line dataKey="critical" name="Critical" stroke="#ef4444" strokeWidth={2} type="monotone" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Abnormal Marker Hotlist</CardTitle>
+            <CardDescription>Most frequent out-of-range markers across active queue.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="h-52">
+              <p className="sr-only">Bar chart showing the most frequent abnormal markers across queue items.</p>
+              <ResponsiveContainer height="100%" width="100%">
+                <BarChart data={pathologistAbnormalMarkers}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="marker" hide />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-2">
+              {pathologistAbnormalMarkers.map((entry) => (
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-sm" key={entry.marker}>
+                  <span>{entry.marker}</span>
+                  <Badge variant="warning">{entry.count}</Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">DICOM Viewer Pro</CardTitle>
-          <CardDescription>Web diagnostic preview + annotation mode simulation.</CardDescription>
+          <CardTitle className="text-sm">DICOM Viewer Pro - Reading Workspace</CardTitle>
+          <CardDescription>
+            Larger diagnostic workspace for daily readouts, with slice and windowing controls.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <p className="font-semibold text-slate-800">
-              Reviewing: {selectedQueueItem ? selectedQueueItem.patientName : pathologistPatient?.name}
-            </p>
-            <p>
-              {selectedQueueItem
-                ? `${selectedQueueItem.id} · ${selectedQueueItem.test}`
-                : 'Select a draft row to lock patient context for review.'}
-            </p>
-            {selectedQueueItem && !queuePatient ? (
-              <p className="mt-1 font-medium text-amber-700">Patient profile missing. Publishing is disabled.</p>
-            ) : null}
+        <CardContent className="grid gap-4 xl:grid-cols-4">
+          <div className="xl:col-span-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">
+                Reviewing: {selectedQueueItem ? selectedQueueItem.patientName : pathologistPatient?.name}
+              </p>
+              <p>
+                {selectedQueueItem
+                  ? `${selectedQueueItem.id} · ${selectedQueueItem.test}`
+                  : 'Select a draft row to lock patient context for review.'}
+              </p>
+              {selectedQueueItem && !queuePatient ? (
+                <p className="mt-1 font-medium text-amber-700">Patient profile missing. Publishing is disabled.</p>
+              ) : null}
+            </div>
+            <div className="relative mt-3 h-[460px] overflow-hidden rounded-2xl border border-slate-900 bg-black">
+              <img
+                alt="DICOM preview"
+                className={cn('h-full w-full object-cover', panEnabled ? 'cursor-grab' : '')}
+                src={scanStack[sliceIndex]}
+                style={{
+                  filter: contrastEnabled ? `contrast(${contrastLevel}%)` : undefined,
+                  transform: `scale(${zoomEnabled ? zoomLevel : 1})`
+                }}
+              />
+              <div className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white">{pathologistPatient?.scanStudy.study}</div>
+              <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white">
+                Slice {sliceIndex + 1}/{Math.max(1, scanStack.length)}
+              </div>
+            </div>
           </div>
-          <div className="relative h-48 overflow-hidden rounded-2xl border border-slate-900 bg-black">
-            <img
-              alt="DICOM preview"
-              className={cn('h-full w-full object-cover', panEnabled ? 'cursor-grab' : '')}
-              src={scanStack[sliceIndex]}
-              style={{
-                filter: contrastEnabled ? `contrast(${contrastLevel}%)` : undefined,
-                transform: `scale(${zoomEnabled ? zoomLevel : 1})`
-              }}
-            />
-            <div className="absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white">{pathologistPatient?.scanStudy.study}</div>
-          </div>
-          <div className="rounded-xl border border-slate-200 p-3">
-            <p className="text-xs font-semibold uppercase text-slate-500">AI Reporting Assistant</p>
-            <p className="mt-1 text-sm text-slate-600">{selectedQueueItem ? aiSummary : 'Select a draft to generate summary.'}</p>
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Switch checked={zoomEnabled} onCheckedChange={setZoomEnabled} /> Zoom
-            <Switch checked={contrastEnabled} onCheckedChange={setContrastEnabled} /> Contrast
-          </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Switch checked={panEnabled} onCheckedChange={setPanEnabled} /> Annotate/Pan
+
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">AI Reporting Assistant</p>
+              <p className="mt-1 text-sm text-slate-600">{selectedQueueItem ? aiSummary : 'Select a draft to generate summary.'}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 p-3 text-sm">
+              <p className="mb-2 font-semibold">Viewer Tools</p>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Switch aria-label="Toggle zoom tool" checked={zoomEnabled} onCheckedChange={setZoomEnabled} /> Zoom
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch aria-label="Toggle contrast tool" checked={contrastEnabled} onCheckedChange={setContrastEnabled} /> Contrast
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch aria-label="Toggle annotate and pan tool" checked={panEnabled} onCheckedChange={setPanEnabled} /> Annotate/Pan
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 p-3">
+              <Label className="text-xs">Slice</Label>
+              <input
+                aria-label="Select MRI slice"
+                className="mt-2 w-full"
+                max={Math.max(0, scanStack.length - 1)}
+                min={0}
+                onChange={(event) => setSliceIndex(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={sliceIndex}
+              />
+              <Label className="mt-3 text-xs">Zoom ({zoomLevel.toFixed(1)}x)</Label>
+              <input
+                aria-label="Adjust MRI zoom"
+                className="mt-2 w-full"
+                max={2}
+                min={1}
+                onChange={(event) => setZoomLevel(Number(event.target.value))}
+                step={0.1}
+                type="range"
+                value={zoomLevel}
+              />
+              <Label className="mt-3 text-xs">Contrast ({contrastLevel}%)</Label>
+              <input
+                aria-label="Adjust MRI contrast"
+                className="mt-2 w-full"
+                max={150}
+                min={80}
+                onChange={(event) => setContrastLevel(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={contrastLevel}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -2316,8 +2561,9 @@ export default function App() {
 
   const renderPatient = () => (
     <section className="mx-auto flex min-h-[90vh] items-center justify-center">
-      <div className="rounded-[48px] border-[10px] border-slate-900 bg-slate-900 p-2 shadow-2xl">
-        <div className="relative h-[844px] w-[390px] overflow-hidden rounded-[40px] bg-slate-50">
+      <div className="rounded-[52px] border border-white/60 bg-white/35 p-2.5 shadow-[0_35px_70px_-35px_rgba(15,23,42,0.75)] backdrop-blur-xl">
+        <div className="relative h-[844px] w-[390px] overflow-hidden rounded-[40px] border border-slate-200/70 bg-[linear-gradient(175deg,#f8fbff,#eef4ff_52%,#f8fafc)]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_10%,rgba(0,102,255,0.12),transparent_36%),radial-gradient(circle_at_88%_84%,rgba(16,185,129,0.1),transparent_34%)]" />
           <div className="absolute inset-x-0 top-0 z-20 h-20 bg-white/90 px-4 pt-3 backdrop-blur">
             <div className="mx-auto h-1.5 w-24 rounded-full bg-slate-300" />
             <div className="mt-2 flex items-center justify-between">
@@ -2350,6 +2596,7 @@ export default function App() {
                     <CardDescription>Vitamin D and TSH longitudinal lines.</CardDescription>
                   </CardHeader>
                   <CardContent className="h-44">
+                    <p className="sr-only">Line chart showing Vitamin D and TSH trends over time for this patient.</p>
                     <ResponsiveContainer height="100%" width="100%">
                       <LineChart data={multiMarkerTrendData}>
                         <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -2427,6 +2674,9 @@ export default function App() {
                       <CardTitle className="text-sm">{selectedBiomarker.marker} Trend</CardTitle>
                     </CardHeader>
                     <CardContent className="h-56">
+                      <p className="sr-only">
+                        Trend chart for {selectedBiomarker.marker} with highlighted normal range.
+                      </p>
                       <ResponsiveContainer height="100%" width="100%">
                         <LineChart data={selectedBiomarker.history}>
                           <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -2457,6 +2707,7 @@ export default function App() {
                   <CardContent>
                     <Label htmlFor="mood-slider">Today mood: {moodSlider}/10</Label>
                     <input
+                      aria-label="Mood score slider"
                       className="mt-2 w-full"
                       id="mood-slider"
                       max={10}
@@ -2474,6 +2725,7 @@ export default function App() {
                     <CardTitle className="text-sm">Your Mood vs. Vitamin D Level</CardTitle>
                   </CardHeader>
                   <CardContent className="h-56">
+                    <p className="sr-only">Dual-axis line chart comparing mood score and Vitamin D trend by date.</p>
                     <ResponsiveContainer height="100%" width="100%">
                       <LineChart data={moodVsVitaminData}>
                         <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
@@ -2497,9 +2749,12 @@ export default function App() {
                       <form className="space-y-2" onSubmit={submitPhq}>
                         {PHQ_QUESTIONS.map((question, index) => (
                           <div className="rounded-xl border border-slate-200 p-2" key={question}>
-                            <Label className="text-xs">{index + 1}. {question}</Label>
+                            <Label className="text-xs" htmlFor={`phq-q-${index}`}>
+                              {index + 1}. {question}
+                            </Label>
                             <Select
                               className="mt-1 h-8"
+                              id={`phq-q-${index}`}
                               onChange={(event) => {
                                 const value = Number(event.target.value)
                                 setPhqAnswers((current) =>
@@ -2593,12 +2848,127 @@ export default function App() {
   )
 
   const renderDoctor = () => (
-    <section className="mx-auto w-full max-w-[1100px]">
-      <div className="space-y-4">
+    <section className="mx-auto w-full max-w-[1440px] space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardTitle>Simplified Clinical View</CardTitle>
-            <CardDescription>Critical values and side-by-side comparisons for rapid decision support.</CardDescription>
+            <CardDescription>Cases Requiring Review</CardDescription>
+            <CardTitle>{labDoctorWorklist.length}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Critical Markers (Selected Patient)</CardDescription>
+            <CardTitle>{criticalDoctorRows.length}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Published Reports (Total)</CardDescription>
+            <CardTitle>{patients.reduce((sum, patient) => sum + patient.reports.filter((r) => r.status === 'Published').length, 0)}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Session Window</CardDescription>
+            <CardTitle>{vitaliaData.doctorPortal.sessionMinutes} min</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <CardTitle>Lab Doctor Case Worklist</CardTitle>
+            <CardDescription>
+              Prioritized abnormal cases with quick patient switching for same-day clinical oversight.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-hidden rounded-2xl border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Patient</TableHead>
+                    <TableHead>Abnormal Markers</TableHead>
+                    <TableHead>Latest Date</TableHead>
+                    <TableHead>Provider</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {labDoctorWorklist.map((row) => (
+                    <TableRow
+                      className="cursor-pointer hover:bg-slate-50"
+                      key={row.patientId}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelectedPatientId(row.patientId)
+                        }
+                      }}
+                      onClick={() => setSelectedPatientId(row.patientId)}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <TableCell className="font-medium">{row.patientName}</TableCell>
+                      <TableCell>
+                        <Badge variant="warning">{row.abnormalCount}</Badge>
+                        <p className="mt-1 text-xs text-slate-500">{row.markers}</p>
+                      </TableCell>
+                      <TableCell>{row.lastDate}</TableCell>
+                      <TableCell>{row.provider}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Marker Exception Distribution</CardTitle>
+            <CardDescription>Most frequent abnormal biomarkers in the current cohort.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-72">
+            <p className="sr-only">Bar chart showing frequency of abnormal biomarker cases across the cohort.</p>
+            <ResponsiveContainer height="100%" width="100%">
+              <BarChart data={labDoctorMarkerExceptionData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="marker" hide />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="cases" fill="#ef4444" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Provider Load (Published Reports)</CardTitle>
+            <CardDescription>Where current report volume is coming from across labs/tenants.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-64">
+            <p className="sr-only">Bar chart showing published report volumes by provider or tenant.</p>
+            <ResponsiveContainer height="100%" width="100%">
+              <BarChart data={labDoctorTenantLoad}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="tenant" hide />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="reports" fill={primaryColor} radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Focused Clinical Comparison</CardTitle>
+            <CardDescription>Current versus previous abnormal values for selected patient.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="mb-4 flex items-center gap-2">
@@ -2608,7 +2978,7 @@ export default function App() {
                   <option key={patient.id} value={patient.id}>{patient.name}</option>
                 ))}
               </Select>
-              <Badge variant="secondary">Session {vitaliaData.doctorPortal.sessionMinutes} min</Badge>
+              <Badge variant="secondary">UID {selectedPatient?.id}</Badge>
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-200">
@@ -2633,34 +3003,50 @@ export default function App() {
             </div>
           </CardContent>
         </Card>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Referral Tracking</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <p>Referred Patients: {patients.length}</p>
-              <p>Completed Test Journeys: {patients.filter((patient) => patient.reports.some((report) => report.status === 'Published')).length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Temporary QR Session</CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-center gap-2 text-sm text-slate-600">
-              <QrCode className="h-4 w-4" />
-              DOC-{selectedPatient?.id?.replace('PT-', '')}-TEMP
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </section>
   )
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      <main className="mx-auto px-4 py-6 sm:px-6 lg:px-8">
+    <div className="relative min-h-screen overflow-x-clip text-slate-900">
+      <a
+        className="sr-only left-3 top-3 z-[120] rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white focus:not-sr-only focus:fixed"
+        href="#main-content"
+      >
+        Skip to main content
+      </a>
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute left-[-12%] top-[-14%] h-80 w-80 rounded-full bg-brand/20 blur-3xl" />
+        <div className="absolute right-[-10%] top-[12%] h-80 w-80 rounded-full bg-emerald-300/20 blur-3xl" />
+        <div className="absolute bottom-[-18%] left-[34%] h-80 w-80 rounded-full bg-sky-300/20 blur-3xl" />
+      </div>
+
+      <header className="sticky top-0 z-40 border-b border-white/60 bg-white/72 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8">
+        <div className="mx-auto grid w-full max-w-[1440px] items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Vitalia Diagnostic Platform</p>
+            <h1 className="text-lg font-semibold text-slate-900">Operations Command Center</h1>
+          </div>
+
+          <div className="justify-self-start md:justify-self-center">
+            <div className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-1.5 text-white">
+              {persona === 'admin' ? <Building2 className="h-4 w-4" /> : null}
+              {persona === 'pathologist' ? <ShieldCheck className="h-4 w-4" /> : null}
+              {persona === 'patient' ? <UserCircle2 className="h-4 w-4" /> : null}
+              {persona === 'doctor' ? <Stethoscope className="h-4 w-4" /> : null}
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-300">Current Persona</span>
+              <span className="text-sm font-semibold">{PERSONA_LABEL[persona]}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 justify-self-start md:justify-self-end">
+            <Badge variant="secondary">{pendingDrafts} Pending Drafts</Badge>
+            <Badge variant="secondary">{patients.length} Patients</Badge>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto px-4 pb-8 pt-6 sm:px-6 lg:px-8 animate-fade-up" id="main-content" tabIndex={-1}>
         {persona === 'admin' ? renderLabAdmin() : null}
         {persona === 'pathologist' ? renderPathologist() : null}
         {persona === 'patient' ? renderPatient() : null}
@@ -2680,8 +3066,11 @@ export default function App() {
               <CardContent className="space-y-2 pt-4">
                 {Object.entries(editedValues).map(([marker, value]) => (
                   <div className="flex items-center gap-2" key={marker}>
-                    <Label className="w-28 text-xs">{marker}</Label>
+                    <Label className="w-28 text-xs" htmlFor={`drawer-${selectedQueueItem.id}-${marker}`}>
+                      {marker}
+                    </Label>
                     <Input
+                      id={`drawer-${selectedQueueItem.id}-${marker}`}
                       onChange={(event) =>
                         setEditedValues((current) => ({
                           ...current,
@@ -2715,13 +3104,18 @@ export default function App() {
       </Drawer>
 
       {toast ? (
-        <div className={cn('fixed right-6 top-6 z-[90] rounded-xl px-4 py-2 text-sm font-medium text-white shadow-lg', toast.tone === 'success' ? 'bg-emerald-600' : 'bg-amber-600')}>
+        <div
+          aria-atomic="true"
+          aria-live={toast.tone === 'success' ? 'polite' : 'assertive'}
+          className={cn('fixed right-6 top-6 z-[90] rounded-xl px-4 py-2 text-sm font-medium text-white shadow-lg', toast.tone === 'success' ? 'bg-emerald-700' : 'bg-amber-700')}
+          role="status"
+        >
           {toast.message}
         </div>
       ) : null}
 
       <button
-        className="fixed bottom-6 right-6 z-[80] inline-flex items-center gap-2 rounded-full bg-brand px-4 py-3 text-sm font-semibold text-white shadow-xl"
+        className="fixed bottom-6 right-6 z-[80] inline-flex items-center gap-2 rounded-2xl border border-white/70 bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-[0_24px_45px_-24px_rgba(2,6,23,0.9)] hover:-translate-y-0.5 hover:bg-slate-800"
         onClick={switchPersona}
         type="button"
       >
@@ -2729,17 +3123,7 @@ export default function App() {
         Switch Persona
       </button>
 
-      <div className="fixed left-4 top-4 z-30 hidden rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow md:inline-flex">
-        <span className="inline-flex items-center gap-1">
-          {persona === 'admin' ? <Building2 className="h-3.5 w-3.5" /> : null}
-          {persona === 'pathologist' ? <ShieldCheck className="h-3.5 w-3.5" /> : null}
-          {persona === 'patient' ? <UserCircle2 className="h-3.5 w-3.5" /> : null}
-          {persona === 'doctor' ? <Stethoscope className="h-3.5 w-3.5" /> : null}
-          {PERSONA_LABEL[persona]}
-        </span>
-      </div>
-
-      <footer className="mx-auto mt-2 flex w-full max-w-[1440px] flex-wrap items-center justify-center gap-4 pb-4 text-xs text-slate-500">
+      <footer className="mx-auto mt-1 flex w-full max-w-[1440px] flex-wrap items-center justify-center gap-4 px-4 pb-6 text-xs text-slate-600 sm:px-6 lg:px-8">
         <span className="inline-flex items-center gap-1"><UserCircle2 className="h-3.5 w-3.5" />{patients.length} patients in vault</span>
         <span className="inline-flex items-center gap-1"><ClipboardList className="h-3.5 w-3.5" />HITL triage + E-sign publish</span>
         <span className="inline-flex items-center gap-1"><PackageCheck className="h-3.5 w-3.5" />Inventory ingestion + equipment compliance</span>
