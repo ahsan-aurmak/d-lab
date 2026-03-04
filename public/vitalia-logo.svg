@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Vitalia Logo">
+  <defs>
+    <linearGradient id="vitaliaG" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0066FF"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="#F8FAFC"/>
+  <path d="M62 124c17-37 39-56 66-56 30 0 52 19 66 56" fill="none" stroke="url(#vitaliaG)" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="128" cy="166" r="22" fill="#0066FF"/>
+</svg>

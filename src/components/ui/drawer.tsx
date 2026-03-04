@@ -7,7 +7,7 @@ export function Drawer({ open, onOpenChange, children }: { open: boolean; onOpen
       {open ? <button aria-label="Overlay" className="fixed inset-0 z-40 bg-slate-900/30" onClick={() => onOpenChange(false)} /> : null}
       <div
         className={cn(
-          'fixed right-0 top-0 z-50 h-full w-full max-w-md transform border-l border-slate-200 bg-white p-6 shadow-xl transition-transform duration-200',
+          'fixed right-0 top-0 z-50 h-full w-full max-w-md transform overflow-y-auto border-l border-slate-200 bg-white p-6 pb-8 shadow-xl transition-transform duration-200 sm:p-7',
           open ? 'translate-x-0' : 'translate-x-full'
         )}
       >

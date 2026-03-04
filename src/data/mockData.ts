@@ -1,4 +1,4 @@
-export type CurrencyCode = 'PKR' | 'SAR' | 'AED'
+export type CurrencyCode = 'USD' | 'PKR' | 'SAR' | 'AED'
 export type LabLocation = 'Pakistan' | 'Saudi Arabia' | 'United Arab Emirates'
 export type ReportStatus = 'Draft' | 'Flagged' | 'Published'
 
@@ -119,10 +119,43 @@ export type RevenueSnapshot = {
   outstandingInvoices: number
 }
 
+export type BillingLedgerItem = {
+  id: string
+  patientName: string
+  test: string
+  payerType: 'Insurance' | 'Self-Pay'
+  totalUsd: number
+  collectedUpfrontUsd: number
+  outstandingUsd: number
+  claimStatus: 'N/A' | 'Submitted' | 'In Review' | 'Paid'
+}
+
+export type EquipmentConnector = {
+  id: string
+  name: string
+  vendor: string
+  dataType: 'Hematology' | 'Chemistry' | 'Imaging' | 'Immunoassay'
+  interfaceStandard: 'HL7 v2.5.1 (LAW)' | 'ASTM LIS2 Serial' | 'DICOM' | 'REST/FHIR API'
+  transport: 'TCP/IP' | 'Serial RS-232' | 'HTTPS'
+  endpoint: string
+  authMode: 'None' | 'Token' | 'Basic' | 'mTLS'
+  syncEnabled: boolean
+  status: 'Connected' | 'Disconnected' | 'Error'
+  lastSync: string
+}
+
 export type InventoryItem = {
-  reagent: string
-  stockLeft: number
+  id: string
+  name: string
+  category: 'Medication' | 'Test Kit' | 'Equipment'
+  stockOnHand: number
   reorderAt: number
+  unit: string
+  sourceType: 'POS Sync' | 'Manual Entry' | 'Purchase Order Sync'
+  sourceRef: string
+  complianceStatus: 'Compliant' | 'Due Soon' | 'Expired' | 'Not Applicable'
+  lastTestedOn: string | null
+  operationalStatus: 'Operational' | 'Maintenance' | 'Down' | 'Not Applicable'
 }
 
 export type StaffMember = {
@@ -151,6 +184,12 @@ export type PhlebotomistStatus = {
 
 export type LabData = {
   revenueByCurrency: Record<CurrencyCode, RevenueSnapshot>
+  paymentMix: {
+    selfPayCount: number
+    insuredCount: number
+  }
+  billingLedger: BillingLedgerItem[]
+  connectors: EquipmentConnector[]
   inventory: InventoryItem[]
   staff: StaffMember[]
   facilities: FacilityProfile[]
@@ -163,7 +202,6 @@ export type VitaliaData = {
   labQueue: LabQueueItem[]
   labData: LabData
   doctorPortal: {
-    otp: string
     sessionMinutes: number
   }
   logisticsPartners: Record<LabLocation, string>
@@ -178,9 +216,9 @@ export const vitaliaSeedJson: VitaliaSeedJson = {
   tenantConfig: {
     labName: 'Al-Hayat Diagnostics',
     location: 'Lahore, PK',
-    currency: 'PKR',
+    currency: 'USD',
     primaryColor: '#0066FF',
-    logoUrl: 'https://logo.placeholder.com/150'
+    logoUrl: '/vitalia-logo.svg'
   },
   patients: [
     {
@@ -428,6 +466,38 @@ export const vitaliaSeedJson: VitaliaSeedJson = {
       test: 'Iron Studies',
       status: 'Published',
       values: { Ferritin: 18 }
+    },
+    {
+      id: 'REQ-004',
+      patientUid: 'PT-5509',
+      patientName: 'Sana Iqbal',
+      test: 'Comprehensive Metabolic Panel',
+      status: 'Draft',
+      values: { Glucose: 97, ALT: 44, AST: 39 }
+    },
+    {
+      id: 'REQ-005',
+      patientUid: 'PT-9921',
+      patientName: 'Aisha Khan',
+      test: 'Thyroid + Vitamin Panel',
+      status: 'Flagged',
+      values: { TSH: 5.8, 'Vitamin D': 19 }
+    },
+    {
+      id: 'REQ-006',
+      patientUid: 'PT-4402',
+      patientName: 'Yousef Al-Dossari',
+      test: 'Liver Function',
+      status: 'Draft',
+      values: { ALT: 62, AST: 51 }
+    },
+    {
+      id: 'REQ-007',
+      patientUid: 'PT-4403',
+      patientName: 'Lina Rahman',
+      test: 'Cardiac Risk Panel',
+      status: 'Draft',
+      values: { LDL: 168, HDL: 38, Triglycerides: 191 }
     }
   ]
 }
@@ -446,6 +516,37 @@ function parseRange(range: string) {
     min: Number.isFinite(min) ? min : 0,
     max: Number.isFinite(max) ? max : 100
   }
+}
+
+function shiftDate(inputDate: string, days: number) {
+  const date = new Date(`${inputDate}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function ensureLongHistory(
+  history: Array<{ date: string; value: number }>,
+  markerName: string,
+  targetPoints = 6
+) {
+  if (!history.length) return history
+  if (history.length >= targetPoints) return history
+
+  const earliest = history[0]
+  const needed = targetPoints - history.length
+  const trendSeed = markerName.length % 4
+
+  const synthetic = Array.from({ length: needed }, (_, index) => {
+    const depth = needed - index
+    const drift = (trendSeed + depth) * 0.2
+    const value = Number(Math.max(0, earliest.value + drift).toFixed(2))
+    return {
+      date: shiftDate(earliest.date, -30 * depth),
+      value
+    }
+  })
+
+  return [...synthetic, ...history]
 }
 
 function mapSliceNameToLocal(fileName: string, index: number) {
@@ -485,7 +586,7 @@ function buildReports(seedPatient: SeedPatient): LabReport[] {
         normalMin: range.min,
         normalMax: range.max,
         flag: result.flag,
-        history: history.length ? history : [{ date: entry.date, value: result.value }]
+        history: ensureLongHistory(history.length ? history : [{ date: entry.date, value: result.value }], result.marker)
       }
     })
 
@@ -554,21 +655,263 @@ function buildPatient(seedPatient: SeedPatient): Patient {
   }
 }
 
+function buildExpandedPatientSet(basePatients: Patient[]) {
+  const syntheticProfiles: Array<{
+    id: string
+    name: string
+    address: string
+    labLocation: LabLocation
+    homeMap: { x: number; y: number }
+  }> = [
+    { id: 'PT-4401', name: 'Hira Mahmood', address: 'Rawalpindi, PK', labLocation: 'Pakistan', homeMap: { x: 63, y: 19 } },
+    { id: 'PT-4402', name: 'Yousef Al-Dossari', address: 'Dammam, SA', labLocation: 'Saudi Arabia', homeMap: { x: 72, y: 38 } },
+    { id: 'PT-4403', name: 'Lina Rahman', address: 'Abu Dhabi, AE', labLocation: 'United Arab Emirates', homeMap: { x: 82, y: 57 } },
+    { id: 'PT-4404', name: 'Farhan Siddiqui', address: 'Multan, PK', labLocation: 'Pakistan', homeMap: { x: 58, y: 28 } },
+    { id: 'PT-4405', name: 'Noor Al-Hassan', address: 'Jeddah, SA', labLocation: 'Saudi Arabia', homeMap: { x: 69, y: 49 } }
+  ]
+
+  const derived = syntheticProfiles.map((profile, index) => {
+    const source = basePatients[index % basePatients.length]
+    const dayOffset = (index + 1) * 14
+
+    return {
+      ...source,
+      id: profile.id,
+      name: profile.name,
+      labLocation: profile.labLocation,
+      address: profile.address,
+      homeMap: profile.homeMap,
+      reports: source.reports.map((report, reportIndex) => ({
+        ...report,
+        id: `${report.id}-${profile.id}`,
+        date: shiftDate(report.date, dayOffset + reportIndex * 3),
+        biomarkers: report.biomarkers.map((marker) => ({
+          ...marker,
+          value: Number((marker.value + (index + 1) * 0.4).toFixed(2)),
+          history: marker.history.map((point, pointIndex) => ({
+            date: shiftDate(point.date, dayOffset + pointIndex),
+            value: Number((point.value + (index + 1) * 0.2).toFixed(2))
+          }))
+        }))
+      })),
+      scanStudy: {
+        ...source.scanStudy,
+        dicomSeriesId: `${source.scanStudy.dicomSeriesId}-${profile.id}`
+      },
+      moodBiology: source.moodBiology.map((point, pointIndex) => ({
+        date: shiftDate(point.date, dayOffset + pointIndex),
+        mood: Math.max(1, Math.min(10, point.mood + (pointIndex % 2 === 0 ? 1 : 0))),
+        tsh: Number((point.tsh + 0.2).toFixed(1))
+      }))
+    }
+  })
+
+  return [...basePatients, ...derived]
+}
+
 export const vitaliaData: VitaliaData = {
   tenantConfig: vitaliaSeedJson.tenantConfig,
-  patients: vitaliaSeedJson.patients.map(buildPatient),
+  patients: buildExpandedPatientSet(vitaliaSeedJson.patients.map(buildPatient)),
   labQueue: vitaliaSeedJson.labQueue,
   labData: {
     revenueByCurrency: {
-      PKR: { dailySales: 1860000, pendingClaims: 420000, outstandingInvoices: 240000 },
-      SAR: { dailySales: 48000, pendingClaims: 12800, outstandingInvoices: 8200 },
-      AED: { dailySales: 52000, pendingClaims: 14200, outstandingInvoices: 9100 }
+      USD: { dailySales: 12450, pendingClaims: 4680, outstandingInvoices: 3120 },
+      PKR: { dailySales: 12450, pendingClaims: 4680, outstandingInvoices: 3120 },
+      SAR: { dailySales: 12450, pendingClaims: 4680, outstandingInvoices: 3120 },
+      AED: { dailySales: 12450, pendingClaims: 4680, outstandingInvoices: 3120 }
     },
+    paymentMix: {
+      selfPayCount: 79,
+      insuredCount: 46
+    },
+    billingLedger: [
+      {
+        id: 'INV-1001',
+        patientName: 'Aisha Khan',
+        test: 'Hematology Panel',
+        payerType: 'Self-Pay',
+        totalUsd: 120,
+        collectedUpfrontUsd: 120,
+        outstandingUsd: 0,
+        claimStatus: 'N/A'
+      },
+      {
+        id: 'INV-1002',
+        patientName: 'Mariam Al-Saud',
+        test: 'Thyroid Panel',
+        payerType: 'Insurance',
+        totalUsd: 210,
+        collectedUpfrontUsd: 0,
+        outstandingUsd: 210,
+        claimStatus: 'Submitted'
+      },
+      {
+        id: 'INV-1003',
+        patientName: 'Omar Nasser',
+        test: 'MRI Knee',
+        payerType: 'Insurance',
+        totalUsd: 440,
+        collectedUpfrontUsd: 0,
+        outstandingUsd: 440,
+        claimStatus: 'In Review'
+      },
+      {
+        id: 'INV-1004',
+        patientName: 'Farhan Siddiqui',
+        test: 'Cardio Metabolic',
+        payerType: 'Self-Pay',
+        totalUsd: 160,
+        collectedUpfrontUsd: 160,
+        outstandingUsd: 0,
+        claimStatus: 'N/A'
+      }
+    ],
+    connectors: [
+      {
+        id: 'CON-01',
+        name: 'Roche Cobas Pro',
+        vendor: 'Roche',
+        dataType: 'Chemistry',
+        interfaceStandard: 'HL7 v2.5.1 (LAW)',
+        transport: 'TCP/IP',
+        endpoint: 'tcp://10.12.1.44:2575',
+        authMode: 'mTLS',
+        syncEnabled: true,
+        status: 'Connected',
+        lastSync: '2026-03-04 10:12 UTC'
+      },
+      {
+        id: 'CON-02',
+        name: 'Sysmex XN-1000',
+        vendor: 'Sysmex',
+        dataType: 'Hematology',
+        interfaceStandard: 'ASTM LIS2 Serial',
+        transport: 'Serial RS-232',
+        endpoint: '/dev/ttyS1 -> LIS Gateway',
+        authMode: 'None',
+        syncEnabled: true,
+        status: 'Connected',
+        lastSync: '2026-03-04 10:09 UTC'
+      },
+      {
+        id: 'CON-03',
+        name: 'PACS Bridge',
+        vendor: 'Orthanc',
+        dataType: 'Imaging',
+        interfaceStandard: 'DICOM',
+        transport: 'TCP/IP',
+        endpoint: 'dicom://10.22.5.18:104',
+        authMode: 'mTLS',
+        syncEnabled: false,
+        status: 'Disconnected',
+        lastSync: '2026-03-03 19:42 UTC'
+      },
+      {
+        id: 'CON-04',
+        name: 'Abbott Alinity',
+        vendor: 'Abbott',
+        dataType: 'Immunoassay',
+        interfaceStandard: 'REST/FHIR API',
+        transport: 'HTTPS',
+        endpoint: 'https://api.vendor.local/fhir',
+        authMode: 'Token',
+        syncEnabled: false,
+        status: 'Error',
+        lastSync: '2026-03-03 16:15 UTC'
+      }
+    ],
     inventory: [
-      { reagent: 'Glucose Kits', stockLeft: 50, reorderAt: 70 },
-      { reagent: 'CBC Reagent Pack', stockLeft: 28, reorderAt: 40 },
-      { reagent: 'TSH Chemiluminescence Cartridges', stockLeft: 16, reorderAt: 30 },
-      { reagent: 'Vitamin D Panels', stockLeft: 22, reorderAt: 35 }
+      {
+        id: 'INV-STK-001',
+        name: 'Metformin 500mg',
+        category: 'Medication',
+        stockOnHand: 320,
+        reorderAt: 180,
+        unit: 'tablets',
+        sourceType: 'POS Sync',
+        sourceRef: 'POS-PO-1042',
+        complianceStatus: 'Not Applicable',
+        lastTestedOn: null,
+        operationalStatus: 'Not Applicable'
+      },
+      {
+        id: 'INV-STK-002',
+        name: 'TSH Chemiluminescence Reagent',
+        category: 'Medication',
+        stockOnHand: 64,
+        reorderAt: 80,
+        unit: 'vials',
+        sourceType: 'Purchase Order Sync',
+        sourceRef: 'ERP-PR-22091',
+        complianceStatus: 'Not Applicable',
+        lastTestedOn: null,
+        operationalStatus: 'Not Applicable'
+      },
+      {
+        id: 'INV-STK-003',
+        name: 'Vitamin D Assay Test Kit',
+        category: 'Test Kit',
+        stockOnHand: 46,
+        reorderAt: 55,
+        unit: 'kits',
+        sourceType: 'POS Sync',
+        sourceRef: 'POS-PO-1047',
+        complianceStatus: 'Not Applicable',
+        lastTestedOn: null,
+        operationalStatus: 'Not Applicable'
+      },
+      {
+        id: 'INV-STK-004',
+        name: 'HbA1c Rapid Test Kit',
+        category: 'Test Kit',
+        stockOnHand: 39,
+        reorderAt: 50,
+        unit: 'kits',
+        sourceType: 'Manual Entry',
+        sourceRef: 'FRONTDESK-ENTRY-77',
+        complianceStatus: 'Not Applicable',
+        lastTestedOn: null,
+        operationalStatus: 'Not Applicable'
+      },
+      {
+        id: 'INV-EQP-001',
+        name: 'Roche Cobas Pro',
+        category: 'Equipment',
+        stockOnHand: 1,
+        reorderAt: 1,
+        unit: 'machine',
+        sourceType: 'Purchase Order Sync',
+        sourceRef: 'ERP-PO-1128',
+        complianceStatus: 'Compliant',
+        lastTestedOn: '2026-02-18',
+        operationalStatus: 'Operational'
+      },
+      {
+        id: 'INV-EQP-002',
+        name: 'Sysmex XN-1000',
+        category: 'Equipment',
+        stockOnHand: 1,
+        reorderAt: 1,
+        unit: 'machine',
+        sourceType: 'Purchase Order Sync',
+        sourceRef: 'ERP-PO-1131',
+        complianceStatus: 'Due Soon',
+        lastTestedOn: '2025-12-30',
+        operationalStatus: 'Operational'
+      },
+      {
+        id: 'INV-EQP-003',
+        name: 'Centrifuge CF-220',
+        category: 'Equipment',
+        stockOnHand: 2,
+        reorderAt: 1,
+        unit: 'machine',
+        sourceType: 'Manual Entry',
+        sourceRef: 'BIOMED-ADHOC-14',
+        complianceStatus: 'Expired',
+        lastTestedOn: '2025-10-06',
+        operationalStatus: 'Maintenance'
+      }
     ],
     staff: [
       { id: 'ST-01', name: 'Adeel Raza', role: 'Admin', branch: 'Lahore Central', accessLevel: 'Full' },
@@ -588,7 +931,6 @@ export const vitaliaData: VitaliaData = {
     ]
   },
   doctorPortal: {
-    otp: '739245',
     sessionMinutes: 20
   },
   logisticsPartners: {

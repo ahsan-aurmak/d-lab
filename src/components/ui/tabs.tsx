@@ -27,7 +27,7 @@ export function Tabs({
 }
 
 export function TabsList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('inline-flex rounded-xl bg-slate-100 p-1', className)} {...props} />
+  return <div className={cn('inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1', className)} {...props} />
 }
 
 export function TabsTrigger({
@@ -47,7 +47,7 @@ export function TabsTrigger({
   return (
     <button
       className={cn(
-        'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+        'inline-flex min-h-9 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors',
         isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900',
         className
       )}
@@ -71,5 +71,5 @@ export function TabsContent({
   const context = React.useContext(TabsContext)
   if (!context || context.value !== value) return null
 
-  return <div className={cn('mt-4', className)}>{children}</div>
+  return <div className={cn('mt-5', className)}>{children}</div>
 }
