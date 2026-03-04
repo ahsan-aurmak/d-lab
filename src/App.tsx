@@ -110,6 +110,12 @@ const PHQ_QUESTIONS = [
 ]
 
 const USD_SYMBOL = '$'
+const BASE_URL = import.meta.env.BASE_URL || '/'
+
+function assetPath(path: string) {
+  return `${BASE_URL}${path.replace(/^\/+/, '')}`
+}
+
 const TEST_CATALOG: Array<{ name: string; priceUsd: number }> = [
   { name: 'Hematology Panel', priceUsd: 120 },
   { name: 'Lipid Profile', priceUsd: 95 },
@@ -832,7 +838,7 @@ export default function App() {
         modality: 'MR',
         provider: 'Pending',
         dicomSeriesId: `DICOM-${id}`,
-        images: Array.from({ length: 10 }, (_, index) => `/mri/slice-${index + 1}.svg`)
+        images: Array.from({ length: 10 }, (_, index) => assetPath(`mri/slice-${index + 1}.svg`))
       },
       moodBiology: [
         { date: baseDate, mood: 6, tsh: 2.6 }
@@ -1085,7 +1091,7 @@ export default function App() {
           className="h-10 w-10 rounded-xl border border-slate-200 object-cover"
           onError={(event) => {
             event.currentTarget.onerror = null
-            event.currentTarget.src = '/vitalia-logo.svg'
+            event.currentTarget.src = assetPath('vitalia-logo.svg')
           }}
           src={logoUrl}
         />

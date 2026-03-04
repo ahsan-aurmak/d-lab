@@ -2,6 +2,12 @@ export type CurrencyCode = 'USD' | 'PKR' | 'SAR' | 'AED'
 export type LabLocation = 'Pakistan' | 'Saudi Arabia' | 'United Arab Emirates'
 export type ReportStatus = 'Draft' | 'Flagged' | 'Published'
 
+const BASE_URL = import.meta.env.BASE_URL || '/'
+
+function assetPath(path: string) {
+  return `${BASE_URL}${path.replace(/^\/+/, '')}`
+}
+
 export type TenantConfig = {
   labName: string
   location: string
@@ -218,7 +224,7 @@ export const vitaliaSeedJson: VitaliaSeedJson = {
     location: 'Lahore, PK',
     currency: 'USD',
     primaryColor: '#0066FF',
-    logoUrl: '/vitalia-logo.svg'
+    logoUrl: assetPath('vitalia-logo.svg')
   },
   patients: [
     {
@@ -551,16 +557,16 @@ function ensureLongHistory(
 
 function mapSliceNameToLocal(fileName: string, index: number) {
   const match = fileName.match(/(\d+)/)
-  if (!match) return `/mri/slice-${(index % 10) + 1}.svg`
+  if (!match) return assetPath(`mri/slice-${(index % 10) + 1}.svg`)
   const parsed = Number(match[1])
   const bounded = Math.max(1, Math.min(10, parsed))
-  return `/mri/slice-${bounded}.svg`
+  return assetPath(`mri/slice-${bounded}.svg`)
 }
 
 function withTenSlices(images: string[]) {
   const mapped = images.map((image, index) => mapSliceNameToLocal(image, index))
   if (!mapped.length) {
-    return Array.from({ length: 10 }, (_, index) => `/mri/slice-${index + 1}.svg`)
+    return Array.from({ length: 10 }, (_, index) => assetPath(`mri/slice-${index + 1}.svg`))
   }
   while (mapped.length < 10) {
     mapped.push(mapped[mapped.length % Math.max(1, mapped.length)])
